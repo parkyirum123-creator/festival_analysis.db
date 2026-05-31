@@ -1,127 +1,119 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
 import plotly.express as px
+import numpy as np
 
 # --- [0. 페이지 설정] ---
-st.set_page_config(page_title="지역축제 방문객 동적 분석", layout="wide")
+st.set_page_config(page_title="지방 지자체 축제 방문객 분석", layout="wide")
 
-# --- [1. 데이터 연동 및 전처리 함수] ---
-def load_data():
-    """
-    실제 SQLite DB 연동 및 전처리
-    파일이 없을 경우를 대비해 Mock Data 생성 로직 포함
-    """
-    try:
-        conn = sqlite3.connect('축제방문자수.db')
-        # DB에서 데이터 읽기 (SQL 쿼리)
-        query = "SELECT 광역자치단체명, 축제명, 방문객수, 연도 FROM 지역축제3개년"
-        df = pd.read_sql(query, conn)
-        conn.close()
-    except Exception:
-        # 실제 DB 파일이 없는 경우를 위한 시연용 가상 데이터 구조 (요구사항 반영)
-        data = {
-            '광역자치단체명': ['서울', '경기', '강원', '제주', '경남', '부산', '인천', '전남', '경북', '충남', '전북', '충북', '대구', '대전', '울산', '광주', '세종'] * 3,
-            '연도': [2023] * 17 + [2024] * 17 + [2025] * 17,
-            '방문객수': [
-                # 2023년 가상 데이터 (수도권/관광지 높음)
-                9000000, 9500000, 6000000, 5500000, 4500000, 4000000, 3500000, 3000000, 2800000, 2500000, 2200000, 2000000, 1800000, 1500000, 1200000, 1000000, 500000,
-                # 2024년 데이터 (수치 변화)
-                9200000, 9800000, 6200000, 5800000, 4700000, 4200000, 3700000, 3100000, 2900000, 2600000, 2300000, 2100000, 1900000, 1600000, 1300000, 1100000, 600000,
-                # 2025년 데이터
-                9500000, 10500000, 6500000, 6100000, 4900000, 4400000, 3900000, 3300000, 3100000, 2800000, 2500000, 2300000, 2100000, 1800000, 1500000, 1300000, 800000
-            ]
-        }
-        df = pd.DataFrame(data)
+# --- [1. 화면 상단 SQL 쿼리 노출] ---
+st.subheader("📋 데이터 추출 쿼리 가이드")
+sql_code = """
+SELECT 
+    year AS '연도',
+    region AS '지자체',
+    SUM(visitor_count) AS '총_방문자_수'
+FROM 
+    festival_db_table
+WHERE 
+    year IN (2023, 2024, 2025)
+    AND region NOT IN ('서울', '경기', '인천')
+GROUP BY 
+    year, region;
+"""
+st.code(sql_code, language='sql')
+
+# --- [2. 테스트용 가상 데이터(Mock Data) 생성] ---
+@st.cache_data
+def get_mock_data():
+    # 수도권 제외 지방 14개 지자체 리스트
+    regions = ['부산', '대구', '광주', '대전', '울산', '세종', '강원', '충북', '충남', '전북', '전남', '경북', '경남', '제주']
+    years = [2023, 2024, 2025]
     
-    # [참고] 만약 CSV 파일로 연동하고 싶다면 아래 주석을 해제하세요.
-    # df = pd.read_csv('your_data.csv') 
-    
-    return df
+    data = []
+    for year in years:
+        for region in regions:
+            # 연도별/지역별로 순위가 변동되도록 가변적인 수치 세팅
+            # 랜덤성을 부여하되 특정 지역이 상위/하위권에 머물도록 가중치 조절
+            if region in ['강원', '제주', '경남']:
+                base = 5000000 + (year - 2023) * 500000
+            elif region in ['세종', '울산', '광주']:
+                base = 800000 + (year - 2023) * 100000
+            else:
+                base = 2500000 + (year - 2023) * 200000
+                
+            visitor_count = base + np.random.randint(-300000, 300000)
+            data.append({'연도': year, '지자체': region, '총_방문자_수': visitor_count})
+            
+    return pd.DataFrame(data)
 
-# 데이터 로드
-df_raw = load_data()
+df_raw = get_mock_data()
 
-# --- [2. UI 레이아웃 및 필터] ---
-st.title("📊 대한민국 지자체별 연간 축제 총 방문자 수 현황")
-st.markdown("전국 17개 광역자치단체의 3개년 데이터를 기반으로 축제 성과를 분석합니다.")
-
-# 필터 영역
+# --- [3. 시각화 및 데이터 전처리] ---
 st.divider()
-selected_year = st.selectbox(
-    "조회 연도 선택",
-    ["2023년", "2024년", "2025년", "3개년 평균"],
-    index=1
+st.title("🏞️ 수도권 제외 지방 지자체 축제 방문객 성과 대시보드")
+
+# 상단 연도 선택 필터
+selected_option = st.selectbox(
+    "조회할 연도를 선택하세요 (수도권 제외 지방 14개 지자체 대상)",
+    ["2023년", "2024년", "2025년", "3개년 평균"]
 )
 
-# --- [3. 데이터 필터링 및 집계] ---
-if selected_year == "3개년 평균":
-    # 3개년 평균 계산: 먼저 지역/연도별 합계를 구한 뒤, 지역별 평균을 냄
-    df_yearly_sum = df_raw.groupby(['광역자치단체명', '연도'])['방문객수'].sum().reset_index()
-    df_filtered = df_yearly_sum.groupby('광역자치단체명')['방문객수'].mean().reset_index()
-    display_title = "지역별 연간 축제 방문자 수 (3개년 평균)"
+# 데이터 필터링 및 집계
+if selected_option == "3개년 평균":
+    df_filtered = df_raw.groupby('지자체')['총_방문자_수'].mean().reset_index()
+    display_year = "3개년 평균"
 else:
-    # 선택된 특정 연도 필터링
-    year_int = int(selected_year[:4])
-    df_filtered = df_raw[df_raw['연도'] == year_int].groupby('광역자치단체명')['방문객수'].sum().reset_index()
-    display_title = f"지역별 연간 축제 방문자 수 ({year_int}년)"
+    year_val = int(selected_option[:4])
+    df_filtered = df_raw[df_raw['연도'] == year_val].copy()
+    display_year = f"{year_val}년"
 
-# X축 순서 고정 (서울, 부산, 대구... 제주 순)
-fixed_order = ['서울', '부산', '대구', '인천', '광주', '대전', '울산', '세종', '경기', '강원', '충북', '충남', '전북', '전남', '경북', '경남', '제주']
-df_filtered['광역자치단체명'] = pd.Categorical(df_filtered['광역자치단체명'], categories=fixed_order, ordered=True)
-df_filtered = df_filtered.sort_values('광역자치단체명')
+# [핵심 요구사항] 방문자 수 많은 순서로 내림차순 정렬
+df_filtered = df_filtered.sort_values(by='총_방문자_수', ascending=False)
 
 # --- [4. 차트 시각화 (Plotly)] ---
 fig = px.bar(
     df_filtered,
-    x='광역자치단체명',
-    y='방문객수',
-    title=display_title,
-    labels={'방문객수': '총 방문자 수 (명)', '광역자치단체명': '지역명'},
-    text_auto='.2s',
-    color='방문객수',
-    color_continuous_scale='Blues'
+    x='지자체',
+    y='총_방문자_수',
+    title=f"[{display_year}] 지방 지자체별 방문자 수 순위 (내림차순 정렬)",
+    labels={'총_방문자_수': '총 방문자 수 (명)', '지자체': '지방 광역자치단체'},
+    text_auto='.3s',
+    color='총_방문자_수',
+    color_continuous_scale='Plasma' # 시각적 대비가 뚜렷한 컬러셋
 )
 
-fig.update_layout(
-    xaxis_title="",
-    yaxis_title="방문객 합계 (명)",
-    margin=dict(l=20, r=20, t=60, b=20),
-    height=500
-)
-
+# 차트 레이아웃 조정 (X축 정렬 상태 유지)
+fig.update_layout(xaxis={'categoryorder':'total descending'}, height=500)
 st.plotly_chart(fig, use_container_width=True)
 
-# --- [5. 동적 인사이트 추출 로직] ---
-# 수치 기반 상위 3개 지역과 하위 3개 지역 추출
-top_3 = df_filtered.nlargest(3, '방문객수')['광역자치단체명'].tolist()
-bottom_3 = df_filtered.nsmallest(3, '방문객수')['광역자치단체명'].tolist()
+# --- [5. 동적 인사이트 자동 추출 및 출력] ---
+# 상위 3개 및 하위 3개 지역 자동 추출
+top_3_list = df_filtered.nlargest(3, '총_방문자_수')['지자체'].tolist()
+bottom_3_list = df_filtered.nsmallest(3, '총_방문자_수')['지자체'].tolist()
 
-# 인사이트 텍스트 구성
+top_3_str = ", ".join(top_3_list)
+bottom_3_str = ", ".join(bottom_3_list)
+
 st.divider()
-st.subheader("📋 데이터 기반 전략 분석 가이드라인")
+st.subheader("💡 데이터 기반 동적 분석 보고서")
 
-# 동적 텍스트 생성
-fact_text = f"**① [데이터 팩트 분석]**: 현재 **{selected_year}** 기준으로 데이터를 분석한 결과, 가장 방문자 수가 많은 상위 지역은 **{', '.join(top_3)}**이며, 반대로 수치가 낮거나 질적 개선이 시급한 하위 지역은 **{', '.join(bottom_3)}**으로 나타납니다."
+# ① 지방 데이터 팩트 분석
+st.markdown(f"""
+**① [지방 데이터 팩트 분석]**  
+현재 **{display_year}** 기준 수도권을 제외한 순수 지방 지역들을 많은 순서대로 정렬한 결과, 상위권에서 독보적인 유입 성과를 보이는 지역은 **[{top_3_str}]**이며, 반대로 방문자 수 유입 개선이 가장 시급한 하위권 지역은 **[{bottom_3_str}]**으로 나타납니다.
+""")
 
-st.info(fact_text)
+# ② 많은 지역(지방 상위권) 벤치마킹 방식
+st.success(f"""
+**② [많은 지역(지방 상위권) 벤치마킹 방식]**  
+데이터 상위권에 배치된 **[{top_3_str}]** 등의 성공 요인은 단순 일회성 행사가 아닌 지역 특색의 브랜드화에 있습니다. 타 지자체들은 단순히 축제 프로그램을 모방할 것이 아니라, 이들 성공 지역처럼 축제 유동인구를 '지역 상품 해외 수출 채널(무역 비즈니스)' 및 '글로벌 유통망'과 결합시키는 비즈니스 융합 모델을 필수적으로 벤치마킹해야 합니다.
+""")
 
-col1, col2 = st.columns(2)
+# ③ 낮은 지역(지방 하위권) 개선 방식
+st.warning(f"""
+**③ [낮은 지역(지방 하위권) 개선 방식]**  
+상대적으로 수치가 저조한 **[{bottom_3_str}]** 등의 지자체들은 매년 관성적으로 집행하던 소규모 축제들을 과감하게 폐지 및 통폐합하는 '양적 구조조정'을 단행해야 합니다. 그 후 잔여 예산을 바탕으로, 정보시스템(MIS) 기반의 체류형 관광 인프라(지정 숙박앱 연계, 스마트 교통망) 구축과 빅데이터 타겟 홍보에 올인하여 '단 1개를 열더라도 하루 자고 가게 만드는 질적 체질 개선'을 이루어야 합니다.
+""")
 
-with col1:
-    st.markdown("#### ✅ 우수 지역 벤치마킹 방식")
-    st.success(f"""
-    **대상: {', '.join(top_3)} 등 상위권 지역**
-    - **브랜드화 성공**: 단순 일회성 행사를 넘어 지역의 정체성을 담은 독보적 브랜드 구축 사례 분석.
-    - **수익형 비즈니스**: 축제를 단순 관람형에서 지역 특산물 수출 및 유통 채널과 연계하여 직접적인 경제 효과를 창출하는 모델 적용.
-    - **체류형 콘텐츠**: 광역 단위 연계 관광 코스 개발을 통한 체류 시간 극대화 전략.
-    """)
-
-with col2:
-    st.markdown("#### ⚠️ 낮은 지역 개선 방식")
-    st.warning(f"""
-    **대상: {', '.join(bottom_3)} 등 하위권 지역**
-    - **양적 구조조정**: 관성적으로 추진되던 소규모/유사 축제들을 과감히 통폐합하여 예산 효율성 제고.
-    - **데이터 기반 마케팅**: 무분별한 홍보 대신 정보시스템(통신사/카드 데이터) 기반의 타겟 고객 분석 및 마케팅 집중.
-    - **인프라 재배정**: 축제 예산의 일부를 스마트 관광 안내 시스템 및 체류형 인프라(숙박, 교통) 고도화에 재투자하는 질적 전환 필요.
-    """)
+st.caption("※ 본 데이터는 분석 환경 테스트를 위한 가상 데이터(Mock Data)를 기반으로 생성되었습니다.")
