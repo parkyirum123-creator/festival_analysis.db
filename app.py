@@ -51,7 +51,7 @@ df_raw = get_mock_data()
 
 # --- [3. 시각화 및 데이터 전처리] ---
 st.divider()
-st.title("🏞️ 수도권 제외 지방 지자체 축제 방문객 성과 대시보드")
+st.title("🏞️ 지역별 축제 방문객 수")
 
 # 상단 연도 선택 필터
 selected_option = st.selectbox(
